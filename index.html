@@ -12982,59 +12982,131 @@ function bfToggleTheme(){
 
 
 <script>
-/* ==================== StrataFlow: Referral Auto-Fill ==================== */
+/* ==================== StrataFlow: Referral Auto-Fill (v2) ==================== */
 (function(){
-    function applyRef(code){
-        var input = document.getElementById('reg-referral-code');
-        var wrap  = document.getElementById('referral-code-wrapper');
-        var auth  = document.getElementById('auth-container');
-        if (!input) return false;
-        if (!auth || auth.classList.contains('hidden')) return false;
-        try { if (typeof toggleAuthCard === 'function') toggleAuthCard('register'); } catch(e){}
-        input.value = code;
-        if (wrap) wrap.classList.add('has-value');
-        try { input.dispatchEvent(new Event('input', {bubbles:true})); } catch(e){}
-        try { input.dispatchEvent(new Event('change', {bubbles:true})); } catch(e){}
-        return true;
+    var SS_KEY = 'pending_ref';
+    var LS_KEY = 'strataflow_pending_ref';
+    var applied = false;
+
+    function getPending(){
+        try { var a = sessionStorage.getItem(SS_KEY); if (a) return a; } catch(e){}
+        try { var b = localStorage.getItem(LS_KEY); if (b) return b; } catch(e){}
+        return null;
     }
-    function tryApply(){
-        try {
-            var pending = sessionStorage.getItem('pending_ref');
-            if (!pending) return;
-            if (applyRef(pending)) {
-                try { if (typeof showToast === 'function') showToast('🎁 تم تطبيق رمز الدعوة تلقائياً: ' + pending, 'success', 3000); } catch(e){}
-            }
-        } catch(e){}
+    function setPending(code){
+        try { sessionStorage.setItem(SS_KEY, code); } catch(e){}
+        try { localStorage.setItem(LS_KEY, code); } catch(e){}
     }
+    function clearPending(){
+        try { sessionStorage.removeItem(SS_KEY); } catch(e){}
+        try { localStorage.removeItem(LS_KEY); } catch(e){}
+    }
+
+    // 1) Read ?ref= / ?invite= / ?code= from URL and persist.
     try {
         var qs = new URLSearchParams(location.search);
         var ref = qs.get('ref') || qs.get('invite') || qs.get('code');
         if (ref) {
-            ref = ref.trim();
+            ref = String(ref).trim();
             if (/^[0-9]{4}$/.test(ref)) {
-                sessionStorage.setItem('pending_ref', ref);
+                setPending(ref);
+                // 2) Clean the URL (preserve hash) without reloading.
+                try {
+                    qs.delete('ref'); qs.delete('invite'); qs.delete('code');
+                    var newSearch = qs.toString();
+                    var cleanUrl = location.origin + location.pathname +
+                        (newSearch ? ('?' + newSearch) : '') + (location.hash || '');
+                    history.replaceState({}, document.title, cleanUrl);
+                } catch(e){}
             }
         }
     } catch(e){}
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function(){
-            tryApply();
-            setTimeout(tryApply, 300);
-            setTimeout(tryApply, 1200);
-        });
-    } else {
-        tryApply();
-        setTimeout(tryApply, 300);
-        setTimeout(tryApply, 1200);
+    function isVisible(el){
+        if (!el) return false;
+        if (el.offsetParent === null) {
+            // fallback for fixed elements
+            var cs = window.getComputedStyle(el);
+            if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+        }
+        return true;
     }
 
+    function applyRef(){
+        var code = getPending();
+        if (!code) return false;
+        var input = document.getElementById('reg-referral-code');
+        if (!input) return false;
+        if (!isVisible(input)) return false;
+
+        // Ensure we're on the register tab if that helper exists.
+        try { if (typeof toggleAuthCard === 'function') toggleAuthCard('register'); } catch(e){}
+
+        if (input.value !== code) {
+            input.value = code;
+            var wrap = document.getElementById('referral-code-wrapper');
+            if (wrap) wrap.classList.add('has-value');
+            try { input.dispatchEvent(new Event('input',  {bubbles:true})); } catch(e){}
+            try { input.dispatchEvent(new Event('change', {bubbles:true})); } catch(e){}
+            if (!applied) {
+                applied = true;
+                try { if (typeof showToast === 'function')
+                    showToast('🎁 تم تطبيق رمز الدعوة تلقائياً: ' + code, 'success', 3000);
+                } catch(e){}
+            }
+        }
+        return true;
+    }
+
+    // 3) Observe DOM changes so we fill the field the moment it appears / becomes visible.
+    var obs;
+    function startObserver(){
+        if (obs || !document.body) return;
+        obs = new MutationObserver(function(){
+            if (!getPending()) return;
+            applyRef();
+        });
+        obs.observe(document.body, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden']
+        });
+    }
+
+    // 4) Re-apply on any click (covers tab switches between login/register).
+    document.addEventListener('click', function(){
+        if (getPending()) setTimeout(applyRef, 30);
+    }, true);
+
+    // 5) Clear only after a successful registration submit.
     document.addEventListener('submit', function(ev){
         var t = ev.target;
         if (t && t.id === 'register-form') {
-            setTimeout(function(){ try{ sessionStorage.removeItem('pending_ref'); }catch(e){} }, 2000);
+            setTimeout(function(){
+                // Only clear if the auth container is gone (user is now logged in).
+                var auth = document.getElementById('auth-container');
+                if (!auth || auth.classList.contains('hidden') || !isVisible(auth)) {
+                    clearPending();
+                    applied = false;
+                }
+            }, 2500);
         }
     }, true);
+
+    function boot(){
+        startObserver();
+        applyRef();
+        setTimeout(applyRef, 300);
+        setTimeout(applyRef, 1200);
+        setTimeout(applyRef, 3000);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
 })();
 </script>
 </body>
